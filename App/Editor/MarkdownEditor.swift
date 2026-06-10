@@ -3,11 +3,14 @@ import AppKit
 
 struct MarkdownEditor: View {
     @Binding var text: String
+    @ObservedObject var find: FindController
+    var sync: ScrollSync
+    var initialLine: Int?
     @State private var issues: [LintIssue] = []
 
     var body: some View {
         VStack(spacing: 0) {
-            RawTextView(text: $text, issues: issues)
+            RawTextView(text: $text, issues: issues, find: find, sync: sync, initialLine: initialLine)
             if !issues.isEmpty {
                 Divider()
                 LintBar(issues: issues)
@@ -44,6 +47,9 @@ private struct LintBar: View {
 private struct RawTextView: NSViewRepresentable {
     @Binding var text: String
     var issues: [LintIssue]
+    var find: FindController
+    var sync: ScrollSync
+    var initialLine: Int?
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }
 
@@ -61,7 +67,7 @@ private struct RawTextView: NSViewRepresentable {
         tv.isAutomaticSpellingCorrectionEnabled = false
         tv.isGrammarCheckingEnabled = false
         tv.allowsUndo = true
-        tv.usesFindBar = true
+        tv.usesFindBar = false // app provides its own unified find bar
         tv.textContainerInset = NSSize(width: 8, height: 12)
         tv.textColor = .textColor
         tv.backgroundColor = .textBackgroundColor
@@ -73,6 +79,15 @@ private struct RawTextView: NSViewRepresentable {
         scroll.drawsBackground = true
 
         context.coordinator.textView = tv
+
+        // report scroll position (top source line) for view<->edit sync
+        let clip = scroll.contentView
+        clip.postsBoundsChangedNotifications = true
+        context.coordinator.observeScroll(clip)
+
+        if let line = initialLine {
+            DispatchQueue.main.async { context.coordinator.scroll(toLine: line) }
+        }
         return scroll
     }
 
@@ -82,8 +97,10 @@ private struct RawTextView: NSViewRepresentable {
             let sel = tv.selectedRange()
             tv.string = text
             tv.setSelectedRange(NSRange(location: min(sel.location, (text as NSString).length), length: 0))
+            context.coordinator.matchesStale = true
         }
         applyUnderlines(tv)
+        context.coordinator.applyFind(find)
     }
 
     private func applyUnderlines(_ tv: NSTextView) {
@@ -105,11 +122,167 @@ private struct RawTextView: NSViewRepresentable {
     final class Coordinator: NSObject, NSTextViewDelegate {
         var parent: RawTextView
         weak var textView: NSTextView?
+        private var boundsObserver: NSObjectProtocol?
+        private var programmatic = false
+        private var reportScheduled = false
+
+        // find state
+        private var matches: [NSRange] = []
+        private var current = 0
+        var matchesStale = false
+        private var lastVisible = false
+        private var lastQuery = ""
+        private var lastCase = false
+        private var lastNav = 0
+
         init(_ parent: RawTextView) { self.parent = parent }
+
+        deinit { if let o = boundsObserver { NotificationCenter.default.removeObserver(o) } }
 
         func textDidChange(_ notification: Notification) {
             guard let tv = notification.object as? NSTextView else { return }
             parent.text = tv.string
+            matchesStale = true
+        }
+
+        // MARK: scroll sync
+
+        func observeScroll(_ clip: NSView) {
+            boundsObserver = NotificationCenter.default.addObserver(
+                forName: NSView.boundsDidChangeNotification, object: clip, queue: .main) { [weak self] _ in
+                self?.reportScroll()
+            }
+        }
+
+        private func reportScroll() {
+            guard !programmatic, !reportScheduled else { return }
+            reportScheduled = true
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                self.reportScheduled = false
+                if !self.programmatic { self.parent.sync.report(line: self.topLine(), from: .edit) }
+            }
+        }
+
+        /// 0-based source line shown at the top of the visible area.
+        private func topLine() -> Int {
+            guard let tv = textView, let lm = tv.layoutManager, let tc = tv.textContainer else { return 0 }
+            let vr = tv.visibleRect
+            let y = max(0, vr.origin.y - tv.textContainerInset.height) + 1
+            let glyph = lm.glyphIndex(for: NSPoint(x: 0, y: y), in: tc)
+            let char = lm.characterIndexForGlyph(at: glyph)
+            let s = tv.string as NSString
+            let head = s.substring(to: min(char, s.length))
+            return head.reduce(0) { $1 == "\n" ? $0 + 1 : $0 }
+        }
+
+        /// Scroll so 0-based source `line` sits at the top.
+        func scroll(toLine line: Int) {
+            guard let tv = textView, let lm = tv.layoutManager, let tc = tv.textContainer,
+                  let clip = tv.enclosingScrollView?.contentView else { return }
+            let s = tv.string as NSString
+            var idx = 0, cur = 0
+            while cur < line && idx < s.length {
+                let lr = s.lineRange(for: NSRange(location: idx, length: 0))
+                let nxt = NSMaxRange(lr)
+                if nxt <= idx { break }
+                idx = nxt; cur += 1
+            }
+            let char = min(idx, s.length)
+            lm.ensureLayout(for: tc)
+            let gr = lm.glyphRange(forCharacterRange: NSRange(location: char, length: 0), actualCharacterRange: nil)
+            let rect = lm.boundingRect(forGlyphRange: gr, in: tc)
+            let targetY = max(0, rect.origin.y + tv.textContainerInset.height)
+            programmatic = true
+            clip.scroll(to: NSPoint(x: 0, y: targetY))
+            tv.enclosingScrollView?.reflectScrolledClipView(clip)
+            DispatchQueue.main.async { [weak self] in self?.programmatic = false }
+        }
+
+        // MARK: find
+
+        func applyFind(_ find: FindController) {
+            guard let tv = textView else { return }
+            let becameVisible = find.isVisible && !lastVisible
+            let queryChanged = find.query != lastQuery || find.caseSensitive != lastCase
+            let navChanged = find.navToken != lastNav
+            let wasVisible = lastVisible
+            lastVisible = find.isVisible
+            lastQuery = find.query
+            lastCase = find.caseSensitive
+            lastNav = find.navToken
+
+            guard find.isVisible else {
+                if wasVisible { clearHighlights(tv) }
+                return
+            }
+            guard becameVisible || queryChanged || navChanged else { return } // ignore status echoes
+            guard !find.query.isEmpty else {
+                matches = []; clearHighlights(tv); setStatus(find, ""); return
+            }
+
+            if becameVisible || queryChanged || matchesStale {
+                recompute(tv)
+                if becameVisible || queryChanged {
+                    let caret = tv.selectedRange().location
+                    current = matches.firstIndex(where: { $0.location >= caret }) ?? 0
+                }
+            }
+            if navChanged && !matches.isEmpty {
+                if find.backwards { current = (current - 1 + matches.count) % matches.count }
+                else { current = (current + 1) % matches.count }
+            }
+            current = matches.isEmpty ? 0 : min(current, matches.count - 1)
+            highlight(tv)
+            if !matches.isEmpty { jumpToCurrent(tv) }
+            setStatus(find, matches.isEmpty ? "Not found" : "\(current + 1)/\(matches.count)")
+        }
+
+        private func recompute(_ tv: NSTextView) {
+            matches = []
+            matchesStale = false
+            let q = lastQuery
+            guard !q.isEmpty else { return }
+            let s = tv.string as NSString
+            let opts: NSString.CompareOptions = lastCase ? [] : [.caseInsensitive]
+            var loc = 0
+            while loc < s.length {
+                let r = s.range(of: q, options: opts, range: NSRange(location: loc, length: s.length - loc))
+                if r.location == NSNotFound { break }
+                matches.append(r)
+                loc = r.location + max(1, r.length)
+            }
+        }
+
+        private func highlight(_ tv: NSTextView) {
+            guard let lm = tv.layoutManager else { return }
+            let full = NSRange(location: 0, length: (tv.string as NSString).length)
+            lm.removeTemporaryAttribute(.backgroundColor, forCharacterRange: full)
+            for (i, r) in matches.enumerated() where NSMaxRange(r) <= full.length {
+                let color = (i == current)
+                    ? NSColor.systemOrange.withAlphaComponent(0.7)
+                    : NSColor.systemYellow.withAlphaComponent(0.45)
+                lm.addTemporaryAttributes([.backgroundColor: color], forCharacterRange: r)
+            }
+        }
+
+        private func clearHighlights(_ tv: NSTextView) {
+            guard let lm = tv.layoutManager else { return }
+            let full = NSRange(location: 0, length: (tv.string as NSString).length)
+            lm.removeTemporaryAttribute(.backgroundColor, forCharacterRange: full)
+        }
+
+        private func jumpToCurrent(_ tv: NSTextView) {
+            guard current < matches.count else { return }
+            let r = matches[current]
+            tv.setSelectedRange(r)
+            programmatic = true
+            tv.scrollRangeToVisible(r)
+            DispatchQueue.main.async { [weak self] in self?.programmatic = false }
+        }
+
+        private func setStatus(_ find: FindController, _ s: String) {
+            if find.status != s { find.status = s }
         }
     }
 }

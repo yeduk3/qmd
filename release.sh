@@ -44,5 +44,16 @@ xcrun stapler staple "$APP"
 rm -f "$ZIP"; ditto -c -k --keepParent "$APP" "$ZIP"
 
 spctl -a -vvv -t exec "$APP" || true
+
+# The notarized .app now lives in $ZIP. Leaving the DerivedData build copy on
+# disk lets Launch Services register it; once the same app is also installed to
+# /Applications, two bundles share com.gyu.qmd(.QuickLookExtension) and pkd
+# rejects one ("another plugin has precedent") — silently killing Quick Look.
+# Drop the build copy so only the installed copy is ever registered.
+echo "==> Cleanup: unregister + remove DerivedData build copy (prevents duplicate bundle-id that breaks Quick Look)"
+LSREG=/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister
+"$LSREG" -u "$APP" 2>/dev/null || true
+rm -rf "$DD/Build/Products/Release"
+
 echo "==> Done: $ZIP"
 echo "    Publish: gh release upload v$VERSION \"$ZIP\" --clobber"

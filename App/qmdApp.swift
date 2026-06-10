@@ -11,6 +11,9 @@ struct qmdApp: App {
         // snapping the group back to the default size. Window sizing is managed
         // manually in ContentView's WindowAccessor (cached size, default fallback).
         .commands {
+            CommandGroup(after: .textEditing) {
+                FindCommands()
+            }
             CommandGroup(after: .toolbar) {
                 ModeCommands()
             }
@@ -41,6 +44,23 @@ private struct TabCommands: View {
         guard let group = NSApp.keyWindow?.tabGroup,
               index < group.windows.count else { return }
         group.selectedWindow = group.windows[index]
+    }
+}
+
+/// Edit-menu Find items wired to the focused window's find controller.
+private struct FindCommands: View {
+    @FocusedValue(\.findController) private var find: FindController?
+
+    var body: some View {
+        Button("Find…") { find?.show() }
+            .keyboardShortcut("f", modifiers: .command)
+            .disabled(find == nil)
+        Button("Find Next") { find?.next() }
+            .keyboardShortcut("g", modifiers: .command)
+            .disabled(find == nil)
+        Button("Find Previous") { find?.prev() }
+            .keyboardShortcut("g", modifiers: [.command, .shift])
+            .disabled(find == nil)
     }
 }
 

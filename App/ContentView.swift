@@ -6,6 +6,8 @@ struct ContentView: View {
 
     @State private var mode: EditorMode = .view
     @State private var columnVisibility: NavigationSplitViewVisibility = .all
+    @StateObject private var find = FindController()
+    @StateObject private var sync = ScrollSync()
 
     private var sidebarVisible: Binding<Bool> {
         Binding(
@@ -28,16 +30,29 @@ struct ContentView: View {
         }
         .focusedSceneValue(\.editorMode, $mode)
         .focusedSceneValue(\.sidebarVisible, sidebarVisible)
+        .focusedSceneValue(\.findController, find)
         .background(WindowAccessor(rootKey: fileURL?.deletingLastPathComponent().standardizedFileURL.path ?? "none"))
     }
 
     @ViewBuilder private var detail: some View {
+        VStack(spacing: 0) {
+            if find.isVisible {
+                FindBar(find: find)
+                Divider()
+            }
+            modeView
+        }
+    }
+
+    @ViewBuilder private var modeView: some View {
         switch mode {
         case .view:
-            MarkdownWebView(markdown: document.text)
+            MarkdownWebView(markdown: document.text, find: find, sync: sync,
+                            initialLine: sync.target(for: .view))
                 .ignoresSafeArea(edges: .bottom)
         case .edit:
-            MarkdownEditor(text: $document.text)
+            MarkdownEditor(text: $document.text, find: find, sync: sync,
+                           initialLine: sync.target(for: .edit))
         }
     }
 
