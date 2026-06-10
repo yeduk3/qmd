@@ -96,6 +96,15 @@ private struct WindowAccessor: NSViewRepresentable {
 
         private var tabID: NSWindow.TabbingIdentifier { "qmd::\(rootKey)" }
 
+        /// Last user-chosen window size, or a sensible default if none cached yet.
+        private static func cachedSize() -> NSSize {
+            if let d = UserDefaults.standard.dictionary(forKey: sizeKey),
+               let w = d["w"] as? Double, let h = d["h"] as? Double, w > 300, h > 200 {
+                return NSSize(width: w, height: h)
+            }
+            return NSSize(width: 1200, height: 820)
+        }
+
         func attach(_ window: NSWindow) {
             window.tabbingMode = .preferred
             window.tabbingIdentifier = tabID
@@ -123,13 +132,11 @@ private struct WindowAccessor: NSViewRepresentable {
                     Self.log.debug("tabbed into host; group count=\(host.tabbedWindows?.count ?? -1)")
                 }
             } else {
-                // first window -> restore saved size
-                if let d = UserDefaults.standard.dictionary(forKey: Self.sizeKey),
-                   let w = d["w"] as? Double, let h = d["h"] as? Double, w > 300, h > 200 {
-                    var f = window.frame
-                    f.size = NSSize(width: w, height: h)
-                    window.setFrame(f, display: true)
-                }
+                // first window of this root -> cached size (or default fallback).
+                // We size manually (no SwiftUI .defaultSize) so nothing re-applies it later.
+                var f = window.frame
+                f.size = Self.cachedSize()
+                window.setFrame(f, display: true)
             }
 
             // persist size on resize

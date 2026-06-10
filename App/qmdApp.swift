@@ -7,7 +7,9 @@ struct qmdApp: App {
         DocumentGroup(newDocument: MarkdownDocument()) { config in
             ContentView(document: config.$document, fileURL: config.fileURL)
         }
-        .defaultSize(width: 1200, height: 820)
+        // NOTE: no .defaultSize — SwiftUI re-applies it after a tab is added,
+        // snapping the group back to the default size. Window sizing is managed
+        // manually in ContentView's WindowAccessor (cached size, default fallback).
         .commands {
             CommandGroup(after: .toolbar) {
                 ModeCommands()
