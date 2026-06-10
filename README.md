@@ -12,7 +12,21 @@ Two modes — clean **View** and raw **Edit**. Folder sidebar, offline **LaTeX**
 ![swift](https://img.shields.io/badge/Swift-5-orange)
 ![license](https://img.shields.io/badge/license-MIT-green)
 
+<br>
+
+<img src="assets/screenshot-view.png" width="860" alt="qmd — View mode: sidebar, tabs, rendered Markdown with KaTeX math and syntax-highlighted code">
+
 </div>
+
+---
+
+## View / Edit
+
+Toggle with `⌘E` — *View* renders KaTeX math, tables, and highlighted code; *Edit* is the raw source with linting. The sidebar shows the file's folder, and same-folder files open as tabs.
+
+| View | Edit |
+| :---: | :---: |
+| <img src="assets/screenshot-view.png" alt="View mode"> | <img src="assets/screenshot-edit.png" alt="Edit mode"> |
 
 ---
 
