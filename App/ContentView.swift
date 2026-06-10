@@ -1,5 +1,4 @@
 import SwiftUI
-import os
 
 struct ContentView: View {
     @Binding var document: MarkdownDocument
@@ -86,7 +85,6 @@ private struct WindowAccessor: NSViewRepresentable {
     }
 
     final class Coordinator {
-        private static let log = Logger(subsystem: "com.gyu.qmd.win", category: "tab")
         private static let sizeKey = "qmd.windowSize"
         private static let registry = NSHashTable<NSWindow>.weakObjects()
         private let rootKey: String
@@ -114,26 +112,18 @@ private struct WindowAccessor: NSViewRepresentable {
             let siblings = Self.registry.allObjects.filter {
                 $0 !== window && $0.tabbingIdentifier == tabID
             }
-            Self.log.debug("attach root=\(self.rootKey, privacy: .public) sameRootSiblings=\(siblings.count)")
             Self.registry.add(window)
 
-            if let host = siblings.first {
-                // a qmd window already exists -> tab into it (share its frame).
-                // Note: a standalone window is already in its own tab-group-of-one,
-                // so guard on "different group", not "no group".
-                if window.tabGroup !== host.tabGroup {
-                    // match the host's frame BEFORE tabbing so adding a tab never
-                    // resizes the group (otherwise the new window's default size wins)
-                    let hostFrame = host.frame
-                    window.setFrame(hostFrame, display: false)
-                    host.addTabbedWindow(window, ordered: .above)
-                    window.setFrame(hostFrame, display: false)
-                    window.makeKeyAndOrderFront(nil)
-                    Self.log.debug("tabbed into host; group count=\(host.tabbedWindows?.count ?? -1)")
-                }
+            if let host = siblings.first, window.tabGroup !== host.tabGroup {
+                // a qmd window already exists -> tab into it, matching its frame so
+                // adding a tab never resizes the group.
+                let hostFrame = host.frame
+                window.setFrame(hostFrame, display: false)
+                host.addTabbedWindow(window, ordered: .above)
+                window.setFrame(hostFrame, display: false)
+                window.makeKeyAndOrderFront(nil)
             } else {
                 // first window of this root -> cached size (or default fallback).
-                // We size manually (no SwiftUI .defaultSize) so nothing re-applies it later.
                 var f = window.frame
                 f.size = Self.cachedSize()
                 window.setFrame(f, display: true)
