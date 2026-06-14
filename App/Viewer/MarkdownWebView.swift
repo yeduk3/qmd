@@ -7,6 +7,8 @@ struct MarkdownWebView: NSViewRepresentable {
     var sync: ScrollSync
     /// Source line to scroll to once loaded (set when arriving from the raw view).
     var initialLine: Int?
+    /// Bumped by `DetailFocusController` to pull keyboard focus into the web view.
+    var focusPulse: Int = 0
 
     func makeCoordinator() -> Coordinator { Coordinator(sync: sync) }
 
@@ -19,6 +21,7 @@ struct MarkdownWebView: NSViewRepresentable {
         webView.setValue(false, forKey: "drawsBackground") // let CSS paint bg, avoid white flash
         context.coordinator.webView = webView
         context.coordinator.pendingLine = initialLine
+        context.coordinator.lastFocusPulse = focusPulse
 
         if let index = WebResources.indexURL(), let dir = WebResources.directory() {
             webView.loadFileURL(index, allowingReadAccessTo: dir)
@@ -29,6 +32,10 @@ struct MarkdownWebView: NSViewRepresentable {
     func updateNSView(_ webView: WKWebView, context: Context) {
         context.coordinator.render(markdown)
         context.coordinator.applyFind(find)
+        if focusPulse != context.coordinator.lastFocusPulse {
+            context.coordinator.lastFocusPulse = focusPulse
+            DispatchQueue.main.async { webView.window?.makeFirstResponder(webView) }
+        }
     }
 
     final class Coordinator: NSObject, WKNavigationDelegate, WKScriptMessageHandler {
@@ -39,6 +46,7 @@ struct MarkdownWebView: NSViewRepresentable {
         private var lastMarkdown: String?
         private var lastRendered: String?
         var pendingLine: Int?
+        var lastFocusPulse = 0
 
         // find de-dup
         private var lastVisible = false

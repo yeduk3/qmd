@@ -6,11 +6,13 @@ struct MarkdownEditor: View {
     @ObservedObject var find: FindController
     var sync: ScrollSync
     var initialLine: Int?
+    var focusPulse: Int = 0
     @State private var issues: [LintIssue] = []
 
     var body: some View {
         VStack(spacing: 0) {
-            RawTextView(text: $text, issues: issues, find: find, sync: sync, initialLine: initialLine)
+            RawTextView(text: $text, issues: issues, find: find, sync: sync,
+                        initialLine: initialLine, focusPulse: focusPulse)
             if !issues.isEmpty {
                 Divider()
                 LintBar(issues: issues)
@@ -50,6 +52,7 @@ private struct RawTextView: NSViewRepresentable {
     var find: FindController
     var sync: ScrollSync
     var initialLine: Int?
+    var focusPulse: Int = 0
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }
 
@@ -85,6 +88,8 @@ private struct RawTextView: NSViewRepresentable {
         clip.postsBoundsChangedNotifications = true
         context.coordinator.observeScroll(clip)
 
+        context.coordinator.lastFocusPulse = focusPulse
+
         // On entering edit mode: take keyboard focus and land the caret at the line
         // that was at the top of the rendered view (the scroll-sync target), so focus
         // sits at the right height instead of jumping to the document top.
@@ -109,6 +114,10 @@ private struct RawTextView: NSViewRepresentable {
         }
         applyUnderlines(tv)
         context.coordinator.applyFind(find)
+        if focusPulse != context.coordinator.lastFocusPulse {
+            context.coordinator.lastFocusPulse = focusPulse
+            DispatchQueue.main.async { context.coordinator.focusEditor() }
+        }
     }
 
     static func dismantleNSView(_ nsView: NSScrollView, coordinator: Coordinator) {
@@ -134,6 +143,7 @@ private struct RawTextView: NSViewRepresentable {
     final class Coordinator: NSObject, NSTextViewDelegate {
         var parent: RawTextView
         weak var textView: NSTextView?
+        var lastFocusPulse = 0
         private var boundsObserver: NSObjectProtocol?
         private var programmatic = false
         private var reportScheduled = false

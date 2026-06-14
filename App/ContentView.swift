@@ -10,6 +10,7 @@ struct ContentView: View {
     @StateObject private var sync = ScrollSync()
     @StateObject private var tree = FileTreeModel()
     @StateObject private var sidebar = SidebarController()
+    @StateObject private var detailFocus = DetailFocusController()
     @Environment(\.openDocument) private var openDocument
 
     private var sidebarVisible: Binding<Bool> {
@@ -25,7 +26,8 @@ struct ContentView: View {
 
     var body: some View {
         NavigationSplitView(columnVisibility: $columnVisibility) {
-            SidebarView(rootURL: fileURL?.deletingLastPathComponent(), currentFile: fileURL, tree: tree, sidebar: sidebar)
+            SidebarView(rootURL: fileURL?.deletingLastPathComponent(), currentFile: fileURL,
+                        tree: tree, sidebar: sidebar, detailFocus: detailFocus)
                 .navigationSplitViewColumnWidth(min: 180, ideal: 240, max: 420)
         } detail: {
             detail
@@ -37,6 +39,26 @@ struct ContentView: View {
         .focusedSceneValue(\.newFileAction, createNewFile)
         .focusedSceneValue(\.focusSidebarAction, focusSidebar)
         .background(WindowAccessor(rootKey: fileURL?.deletingLastPathComponent().standardizedFileURL.path ?? "none"))
+        // A sidebar-initiated open can land in this tab (new or already-open); claim
+        // the parked focus intent once we're showing that file.
+        .onAppear { claimPendingFocus() }
+        .onReceive(NotificationCenter.default.publisher(for: NSWindow.didBecomeKeyNotification)) { _ in
+            claimPendingFocus()
+        }
+    }
+
+    /// If a sidebar open parked a focus intent for this tab's file, apply it (focus the
+    /// sidebar for a Space-preview, or the detail view for ⌘↓ / click) and clear it.
+    private func claimPendingFocus() {
+        guard let p = OpenFocusRouter.shared.pending, let f = fileURL,
+              f.standardizedFileURL == p.url.standardizedFileURL else { return }
+        OpenFocusRouter.shared.pending = nil
+        DispatchQueue.main.async {
+            switch p.target {
+            case .sidebar: sidebar.focus()
+            case .detail: detailFocus.focus()
+            }
+        }
     }
 
     /// Creates a new markdown file in the open file's folder and opens it as a tab.
@@ -47,8 +69,13 @@ struct ContentView: View {
         Task { try? await openDocument(at: url) }
     }
 
-    /// Reveals the sidebar (if collapsed) and pulls keyboard focus into it (⌘⇧E).
+    /// ⌘⇧E toggle: if the sidebar already holds keyboard focus, bounce focus to the
+    /// detail view; otherwise reveal the sidebar (if collapsed) and focus it.
     private func focusSidebar() {
+        if let ov = sidebar.outlineView, ov.window?.firstResponder === ov {
+            detailFocus.focus()
+            return
+        }
         if columnVisibility == .detailOnly {
             withAnimation(.easeInOut(duration: 0.25)) { columnVisibility = .all }
         }
@@ -69,11 +96,11 @@ struct ContentView: View {
         switch mode {
         case .view:
             MarkdownWebView(markdown: document.text, find: find, sync: sync,
-                            initialLine: sync.target(for: .view))
+                            initialLine: sync.target(for: .view), focusPulse: detailFocus.pulse)
                 .ignoresSafeArea(edges: .bottom)
         case .edit:
             MarkdownEditor(text: $document.text, find: find, sync: sync,
-                           initialLine: sync.target(for: .edit))
+                           initialLine: sync.target(for: .edit), focusPulse: detailFocus.pulse)
         }
     }
 

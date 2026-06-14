@@ -28,14 +28,24 @@ final class SidebarController: ObservableObject {
     @Published var renameText = ""
     /// Bumped to move keyboard focus into the list (⌘⇧E, or after a rename commits).
     @Published var focusPulse = 0
-    /// Set by the key monitor (space / ⌘↓) to ask SwiftUI to open a file; SwiftUI
-    /// owns `openDocument`, the AppKit monitor doesn't, so it routes through here.
-    @Published var openRequest: URL?
+    /// Set by the key monitor (Space / ⌘↓) and row clicks to ask SwiftUI to open a
+    /// file; SwiftUI owns `openDocument`, the AppKit monitor doesn't, so it routes
+    /// through here. `focusDetail` distinguishes ⌘↓/click (move focus to the file
+    /// view) from Space (preview, keep focus in the sidebar). `token` makes a repeat
+    /// of the same request still fire `onChange`.
+    @Published var openRequest: OpenRequest?
     /// The List's backing outline view, captured by the keyboard bridge so the key
     /// monitor can tell whether *this* tab's sidebar is the first responder.
     weak var outlineView: NSView?
 
+    struct OpenRequest: Equatable { let url: URL; let focusDetail: Bool; let token: Int }
+    private var openToken = 0
+
     func focus() { focusPulse &+= 1 }
+    func requestOpen(_ url: URL, focusDetail: Bool) {
+        openToken &+= 1
+        openRequest = OpenRequest(url: url, focusDetail: focusDetail, token: openToken)
+    }
     func beginRename(_ url: URL) { selection = url; renamingURL = url }
     func endRename() { renamingURL = nil; focus() }
 }
@@ -45,6 +55,7 @@ struct SidebarView: View {
     let currentFile: URL?
     @ObservedObject var tree: FileTreeModel
     @ObservedObject var sidebar: SidebarController
+    @ObservedObject var detailFocus: DetailFocusController
     @Environment(\.openDocument) private var openDocument
 
     var body: some View {
@@ -80,18 +91,25 @@ struct SidebarView: View {
                         sidebar.selection = currentFile ?? FileEntry.children(of: rootURL).first?.url
                     }
                 }
-                .onChange(of: sidebar.openRequest) { _, url in
-                    guard let url else { return }
+                .onChange(of: sidebar.openRequest) { _, req in
+                    guard let req else { return }
                     sidebar.openRequest = nil
-                    open(url)
+                    activate(req.url, focusDetail: req.focusDetail)
                 }
+                // Keep the visible selection on the file this tab is showing, so
+                // switching tabs (or following a rename) never leaves a stale row
+                // highlighted from a different tab.
+                .onChange(of: currentFile) { _, f in sidebar.selection = f }
             } else {
                 ContentUnavailableView("No Folder", systemImage: "folder",
                     description: Text("Open a Markdown file to browse its folder."))
             }
         }
         .frame(minWidth: 180)
-        .onAppear { tree.watch(rootURL) }
+        .onAppear {
+            tree.watch(rootURL)
+            if sidebar.selection == nil { sidebar.selection = currentFile }
+        }
         .onChange(of: rootURL) { _, new in tree.watch(new) }
     }
 
@@ -101,17 +119,27 @@ struct SidebarView: View {
         Task { try? await openDocument(at: url) }
     }
 
-    /// Opens a selected row by URL (keyboard: space / ⌘↓). Folders are left to the
-    /// list's native ←/→ expand; only files open.
-    private func open(_ url: URL) {
+    /// Opens / re-focuses for a sidebar row. `focusDetail` distinguishes ⌘↓ and click
+    /// (move focus to the file view) from Space (preview — keep focus in the sidebar).
+    /// Folders are left to the list's native ←/→ expand.
+    private func activate(_ url: URL, focusDetail: Bool) {
         var isDir: ObjCBool = false
         FileManager.default.fileExists(atPath: url.path, isDirectory: &isDir)
         guard !isDir.boolValue else { return }
-        if FileEntry.isMarkdown(url) {
-            Task { try? await openDocument(at: url) }
-        } else {
-            NSWorkspace.shared.open(url)
+
+        // Already the open file -> don't reopen, just move focus where asked.
+        if currentFile?.standardizedFileURL == url.standardizedFileURL {
+            if focusDetail { detailFocus.focus() } else { sidebar.focus() }
+            return
         }
+        guard FileEntry.isMarkdown(url) else {
+            NSWorkspace.shared.open(url)   // hand non-markdown to its default app
+            return
+        }
+        // Opening may switch to another tab; park the focus intent for the destination
+        // ContentView to claim once it shows this file.
+        OpenFocusRouter.shared.pending = PendingFocus(url: url, target: focusDetail ? .detail : .sidebar)
+        Task { try? await openDocument(at: url) }
     }
 }
 
@@ -218,11 +246,7 @@ private struct FileRow: View {
 
     private func open() {
         sidebar.selection = entry.url
-        if entry.isMarkdown {
-            Task { try? await openDocument(at: entry.url) }
-        } else {
-            NSWorkspace.shared.open(entry.url)
-        }
+        sidebar.requestOpen(entry.url, focusDetail: true)   // click -> open + focus the file view
     }
 }
 
@@ -387,11 +411,11 @@ private struct SidebarKeyboardBridge: NSViewRepresentable {
             case 36, 76:                     // Return / Enter -> rename
                 controller.beginRename(sel)
                 return nil
-            case 49:                         // Space -> open
-                controller.openRequest = sel
+            case 49:                         // Space -> preview (keep focus in sidebar)
+                controller.requestOpen(sel, focusDetail: false)
                 return nil
-            case 125 where event.modifierFlags.contains(.command):  // ⌘↓ -> open
-                controller.openRequest = sel
+            case 125 where event.modifierFlags.contains(.command):  // ⌘↓ -> open + focus file view
+                controller.requestOpen(sel, focusDetail: true)
                 return nil
             default:
                 return event

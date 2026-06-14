@@ -48,6 +48,28 @@ final class ScrollSync: ObservableObject {
     }
 }
 
+/// Pulse asking the active tab's detail view (rendered web view or raw editor) to
+/// become first responder. ContentView owns one; ⌘⇧E-toggle, ⌘↓, and click bump it.
+final class DetailFocusController: ObservableObject {
+    @Published var pulse = 0
+    func focus() { pulse &+= 1 }
+}
+
+/// Which side takes keyboard focus after a sidebar-initiated open.
+enum SidebarFocusTarget { case sidebar, detail }
+
+/// A focus request that must outlive the `openDocument` tab switch. Opening a file can
+/// activate a *different* tab (a separate ContentView), so the intent can't be passed
+/// through SwiftUI state — it's parked here and claimed by the destination tab, matched
+/// by URL.
+struct PendingFocus { let url: URL; let target: SidebarFocusTarget }
+
+final class OpenFocusRouter {
+    static let shared = OpenFocusRouter()
+    var pending: PendingFocus?
+    private init() {}
+}
+
 // Focused value so the menu's Find commands reach the focused window's controller.
 private struct FindControllerKey: FocusedValueKey { typealias Value = FindController }
 
