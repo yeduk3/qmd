@@ -39,6 +39,12 @@ struct ContentView: View {
         .focusedSceneValue(\.newFileAction, createNewFile)
         .focusedSceneValue(\.focusSidebarAction, focusSidebar)
         .background(WindowAccessor(rootKey: fileURL?.deletingLastPathComponent().standardizedFileURL.path ?? "none"))
+        // Toggling to the rendered view focuses it so arrow keys scroll immediately.
+        // (The raw editor self-focuses on entry.) Only fires on an actual ⌘E toggle,
+        // not on a fresh tab/Space-preview where mode starts at .view.
+        .onChange(of: mode) { _, m in
+            if m == .view { detailFocus.focus() }
+        }
         // A sidebar-initiated open can land in this tab (new or already-open); claim
         // the parked focus intent once we're showing that file.
         .onAppear { claimPendingFocus() }
