@@ -75,6 +75,14 @@ window.qmdSetFontScale = function (scale) {
 // to a readable measure and centered. Kept in sync with the raw editor.
 window.qmdSetFullWidth = function (full) {
   document.body.classList.toggle('full-width', !!full);
+  // Enable the width transition only after the initial apply has painted, so opening
+  // a doc that was saved full-width snaps to width instead of animating on load.
+  if (!window.__qmdWidthAnim) {
+    window.__qmdWidthAnim = true;
+    requestAnimationFrame(function () {
+      requestAnimationFrame(function () { document.body.classList.add('anim'); });
+    });
+  }
 };
 
 // ---- scroll sync API -------------------------------------------------------

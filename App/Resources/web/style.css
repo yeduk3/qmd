@@ -38,8 +38,11 @@ body {
   padding: 40px 32px 120px;
   word-wrap: break-word;
 }
-/* Full-width toggle: let the content fill the viewport instead of the capped measure. */
-body.full-width #content { max-width: none; }
+/* Full-width toggle: fill the viewport instead of the capped measure. The transition
+   (enabled only after first paint via body.anim, so opening a saved-full-width doc
+   doesn't animate from the default measure) gives a smooth grow/shrink on toggle. */
+body.anim #content { transition: max-width 0.22s ease; }
+body.full-width #content { max-width: 100%; }
 
 #content h1, #content h2, #content h3, #content h4, #content h5, #content h6 {
   font-weight: 600;

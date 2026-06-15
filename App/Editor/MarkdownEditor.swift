@@ -140,9 +140,10 @@ private struct RawTextView: NSViewRepresentable {
             context.coordinator.lastFontSize = fontSize
             tv.font = NSFont.monospacedSystemFont(ofSize: fontSize, weight: .regular)
         }
+        let widthChanged = context.coordinator.fullWidth != fullWidth
         context.coordinator.fullWidth = fullWidth
         context.coordinator.measure = measure
-        context.coordinator.applyWidth(nsView)
+        context.coordinator.applyWidth(nsView, animated: widthChanged)
         applyUnderlines(tv)
         context.coordinator.applyFind(find)
         if focusPulse != context.coordinator.lastFocusPulse {
@@ -180,6 +181,7 @@ private struct RawTextView: NSViewRepresentable {
         var measure: CGFloat = RawTextView.maxMeasure
         private var boundsObserver: NSObjectProtocol?
         private var frameObserver: NSObjectProtocol?
+        private var widthAnimTimer: Timer?
         private var programmatic = false
         private var reportScheduled = false
 
@@ -197,6 +199,7 @@ private struct RawTextView: NSViewRepresentable {
         deinit {
             if let o = boundsObserver { NotificationCenter.default.removeObserver(o) }
             if let o = frameObserver { NotificationCenter.default.removeObserver(o) }
+            widthAnimTimer?.invalidate()
         }
 
         func textDidChange(_ notification: Notification) {
@@ -229,12 +232,32 @@ private struct RawTextView: NSViewRepresentable {
 
         /// Off: cap the text measure and center it via a horizontal container inset.
         /// On: fill the available width (8pt gutter), the original editor behavior.
-        func applyWidth(_ scroll: NSScrollView) {
+        /// `animated` (toggle only) tweens the inset so the column grows/shrinks
+        /// smoothly; resize/zoom/initial layout snap instantly.
+        func applyWidth(_ scroll: NSScrollView, animated: Bool = false) {
             guard let tv = scroll.documentView as? NSTextView else { return }
             let viewW = scroll.contentSize.width
-            let inset = fullWidth ? 8 : max(8, (viewW - measure) / 2)
-            guard abs(tv.textContainerInset.width - inset) > 0.5 else { return }
-            tv.textContainerInset = NSSize(width: inset, height: tv.textContainerInset.height)
+            let target = fullWidth ? 8 : max(8, (viewW - measure) / 2)
+            let start = tv.textContainerInset.width
+            widthAnimTimer?.invalidate(); widthAnimTimer = nil
+            guard abs(target - start) > 0.5 else { return }
+            guard animated else { return setInset(tv, target) }
+
+            let duration = 0.22, startTime = Date()
+            let timer = Timer(timeInterval: 1.0 / 60.0, repeats: true) { [weak self, weak tv] t in
+                guard let self, let tv else { t.invalidate(); return }
+                let p = min(1, Date().timeIntervalSince(startTime) / duration)
+                let eased = p * p * (3 - 2 * p)   // smoothstep
+                self.setInset(tv, start + (target - start) * CGFloat(eased))
+                if p >= 1 { t.invalidate(); self.widthAnimTimer = nil }
+            }
+            widthAnimTimer = timer
+            // .common so it keeps ticking during scroll/resize event tracking.
+            RunLoop.main.add(timer, forMode: .common)
+        }
+
+        private func setInset(_ tv: NSTextView, _ w: CGFloat) {
+            tv.textContainerInset = NSSize(width: w, height: tv.textContainerInset.height)
             if let tc = tv.textContainer { tv.layoutManager?.textContainerChangedGeometry(tc) }
         }
 
