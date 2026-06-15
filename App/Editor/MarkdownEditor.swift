@@ -8,6 +8,7 @@ struct MarkdownEditor: View {
     var initialLine: Int?
     var focusPulse: Int = 0
     var fontScale: Double = 1
+    var fullWidth: Bool = false
     var selection: SelectionController
     @State private var issues: [LintIssue] = []
 
@@ -15,7 +16,7 @@ struct MarkdownEditor: View {
         VStack(spacing: 0) {
             RawTextView(text: $text, issues: issues, find: find, sync: sync,
                         initialLine: initialLine, focusPulse: focusPulse, fontScale: fontScale,
-                        selection: selection)
+                        fullWidth: fullWidth, selection: selection)
             if !issues.isEmpty {
                 Divider()
                 LintBar(issues: issues)
@@ -57,10 +58,17 @@ private struct RawTextView: NSViewRepresentable {
     var initialLine: Int?
     var focusPulse: Int = 0
     var fontScale: Double = 1
+    var fullWidth: Bool = false
     var selection: SelectionController
+
+    /// Base text measure (points) used when full-width is off, before zoom scaling.
+    static let maxMeasure: CGFloat = 720
 
     /// Monospace point size at the current zoom (13pt is the 1.0 baseline).
     private var fontSize: CGFloat { 13 * CGFloat(fontScale) }
+
+    /// Capped text measure at the current zoom (scales so zoomed text isn't cramped).
+    private var measure: CGFloat { Self.maxMeasure * CGFloat(fontScale) }
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }
 
@@ -97,6 +105,12 @@ private struct RawTextView: NSViewRepresentable {
         clip.postsBoundsChangedNotifications = true
         context.coordinator.observeScroll(clip)
 
+        // full-width: off caps the measure and centers it via horizontal inset, on
+        // fills the view width (the original behavior). Recenter when the view resizes.
+        context.coordinator.fullWidth = fullWidth
+        context.coordinator.measure = measure
+        context.coordinator.observeFrame(scroll)
+
         context.coordinator.lastFocusPulse = focusPulse
 
         // On entering edit mode: take keyboard focus and land the caret at the line
@@ -104,6 +118,7 @@ private struct RawTextView: NSViewRepresentable {
         // sits at the right height instead of jumping to the document top.
         DispatchQueue.main.async {
             let coord = context.coordinator
+            coord.applyWidth(scroll)
             coord.focusEditor()
             if let line = initialLine {
                 coord.placeCaret(atLine: line)
@@ -125,6 +140,9 @@ private struct RawTextView: NSViewRepresentable {
             context.coordinator.lastFontSize = fontSize
             tv.font = NSFont.monospacedSystemFont(ofSize: fontSize, weight: .regular)
         }
+        context.coordinator.fullWidth = fullWidth
+        context.coordinator.measure = measure
+        context.coordinator.applyWidth(nsView)
         applyUnderlines(tv)
         context.coordinator.applyFind(find)
         if focusPulse != context.coordinator.lastFocusPulse {
@@ -158,7 +176,10 @@ private struct RawTextView: NSViewRepresentable {
         weak var textView: NSTextView?
         var lastFocusPulse = 0
         var lastFontSize: CGFloat = 13
+        var fullWidth = false
+        var measure: CGFloat = RawTextView.maxMeasure
         private var boundsObserver: NSObjectProtocol?
+        private var frameObserver: NSObjectProtocol?
         private var programmatic = false
         private var reportScheduled = false
 
@@ -173,7 +194,10 @@ private struct RawTextView: NSViewRepresentable {
 
         init(_ parent: RawTextView) { self.parent = parent }
 
-        deinit { if let o = boundsObserver { NotificationCenter.default.removeObserver(o) } }
+        deinit {
+            if let o = boundsObserver { NotificationCenter.default.removeObserver(o) }
+            if let o = frameObserver { NotificationCenter.default.removeObserver(o) }
+        }
 
         func textDidChange(_ notification: Notification) {
             guard let tv = notification.object as? NSTextView else { return }
@@ -188,6 +212,30 @@ private struct RawTextView: NSViewRepresentable {
             // emoji/combining marks read as one. Empty selection -> 0 -> bar hides.
             let n = r.length == 0 ? 0 : (tv.string as NSString).substring(with: r).count
             parent.selection.report(n)
+        }
+
+        // MARK: width
+
+        /// Recompute centering whenever the scroll view resizes (full-width-off mode
+        /// keeps the measure centered as the window grows/shrinks).
+        func observeFrame(_ scroll: NSScrollView) {
+            scroll.postsFrameChangedNotifications = true
+            frameObserver = NotificationCenter.default.addObserver(
+                forName: NSView.frameDidChangeNotification, object: scroll, queue: .main) { [weak self, weak scroll] _ in
+                guard let self, let scroll else { return }
+                self.applyWidth(scroll)
+            }
+        }
+
+        /// Off: cap the text measure and center it via a horizontal container inset.
+        /// On: fill the available width (8pt gutter), the original editor behavior.
+        func applyWidth(_ scroll: NSScrollView) {
+            guard let tv = scroll.documentView as? NSTextView else { return }
+            let viewW = scroll.contentSize.width
+            let inset = fullWidth ? 8 : max(8, (viewW - measure) / 2)
+            guard abs(tv.textContainerInset.width - inset) > 0.5 else { return }
+            tv.textContainerInset = NSSize(width: inset, height: tv.textContainerInset.height)
+            if let tc = tv.textContainer { tv.layoutManager?.textContainerChangedGeometry(tc) }
         }
 
         // MARK: scroll sync

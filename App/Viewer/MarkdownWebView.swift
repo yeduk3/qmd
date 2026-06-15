@@ -11,6 +11,8 @@ struct MarkdownWebView: NSViewRepresentable {
     var focusPulse: Int = 0
     /// App-wide font zoom (1.0 == default). Applied as the rendered body font-size.
     var fontScale: Double = 1
+    /// App-wide full-width toggle (synced with the raw editor). Off caps the measure.
+    var fullWidth: Bool = false
     /// Receives the rendered selection's character count for the bottom readout.
     var selection: SelectionController
 
@@ -28,6 +30,7 @@ struct MarkdownWebView: NSViewRepresentable {
         context.coordinator.pendingLine = initialLine
         context.coordinator.lastFocusPulse = focusPulse
         context.coordinator.fontScale = fontScale
+        context.coordinator.fullWidth = fullWidth
 
         if let index = WebResources.indexURL(), let dir = WebResources.directory() {
             webView.loadFileURL(index, allowingReadAccessTo: dir)
@@ -38,6 +41,7 @@ struct MarkdownWebView: NSViewRepresentable {
     func updateNSView(_ webView: WKWebView, context: Context) {
         context.coordinator.render(markdown)
         context.coordinator.applyFontScale(fontScale)
+        context.coordinator.applyFullWidth(fullWidth)
         context.coordinator.applyFind(find)
         if focusPulse != context.coordinator.lastFocusPulse {
             context.coordinator.lastFocusPulse = focusPulse
@@ -57,6 +61,8 @@ struct MarkdownWebView: NSViewRepresentable {
         var lastFocusPulse = 0
         var fontScale: Double = 1
         private var appliedFontScale: Double = .nan
+        var fullWidth = false
+        private var appliedFullWidth: Bool?
 
         // find de-dup
         private var lastVisible = false
@@ -85,6 +91,14 @@ struct MarkdownWebView: NSViewRepresentable {
             guard ready, scale != appliedFontScale else { return }
             appliedFontScale = scale
             webView?.evaluateJavaScript("window.qmdSetFontScale(\(scale));", completionHandler: nil)
+        }
+
+        /// Push the full-width state into the page (no-op until ready, de-duped).
+        func applyFullWidth(_ full: Bool) {
+            fullWidth = full
+            guard ready, full != appliedFullWidth else { return }
+            appliedFullWidth = full
+            webView?.evaluateJavaScript("window.qmdSetFullWidth(\(full));", completionHandler: nil)
         }
 
         // MARK: find
@@ -145,6 +159,8 @@ struct MarkdownWebView: NSViewRepresentable {
                 render(md)
                 appliedFontScale = .nan        // force a fresh apply now that the page exists
                 applyFontScale(fontScale)
+                appliedFullWidth = nil
+                applyFullWidth(fullWidth)
                 if let line = pendingLine {
                     pendingLine = nil
                     webView?.evaluateJavaScript(

@@ -20,6 +20,8 @@ struct qmdApp: App {
             CommandGroup(after: .toolbar) {
                 ModeCommands()
                 Divider()
+                FullWidthCommand()
+                Divider()
                 FontSizeCommands()
             }
             CommandGroup(after: .windowArrangement) {
@@ -106,6 +108,18 @@ private struct ModeCommands: View {
         Button("Focus Sidebar") { focusSidebar?() }
             .keyboardShortcut("e", modifiers: [.command, .shift])
             .disabled(focusSidebar == nil)
+    }
+}
+
+/// View-menu full-width toggle, synced across the rendered view and raw editor.
+/// Off (default) caps the content to a readable centered measure; on fills the width.
+private struct FullWidthCommand: View {
+    @ObservedObject private var width = FullWidthMode.shared
+
+    var body: some View {
+        Toggle("Full Width", isOn: Binding(get: { width.isFullWidth },
+                                           set: { _ in width.toggle() }))
+            .keyboardShortcut("f", modifiers: [.command, .shift])
     }
 }
 

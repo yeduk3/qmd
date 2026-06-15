@@ -38,6 +38,8 @@ body {
   padding: 40px 32px 120px;
   word-wrap: break-word;
 }
+/* Full-width toggle: let the content fill the viewport instead of the capped measure. */
+body.full-width #content { max-width: none; }
 
 #content h1, #content h2, #content h3, #content h4, #content h5, #content h6 {
   font-weight: 600;

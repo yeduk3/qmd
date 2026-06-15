@@ -13,6 +13,7 @@ struct ContentView: View {
     @StateObject private var detailFocus = DetailFocusController()
     @StateObject private var selection = SelectionController()
     @ObservedObject private var fontScale = FontScale.shared
+    @ObservedObject private var fullWidth = FullWidthMode.shared
     @Environment(\.openDocument) private var openDocument
 
     private var sidebarVisible: Binding<Bool> {
@@ -110,16 +111,23 @@ struct ContentView: View {
         case .view:
             MarkdownWebView(markdown: document.text, find: find, sync: sync,
                             initialLine: sync.target(for: .view), focusPulse: detailFocus.pulse,
-                            fontScale: fontScale.scale, selection: selection)
+                            fontScale: fontScale.scale, fullWidth: fullWidth.isFullWidth, selection: selection)
                 .ignoresSafeArea(edges: .bottom)
         case .edit:
             MarkdownEditor(text: $document.text, find: find, sync: sync,
                            initialLine: sync.target(for: .edit), focusPulse: detailFocus.pulse,
-                           fontScale: fontScale.scale, selection: selection)
+                           fontScale: fontScale.scale, fullWidth: fullWidth.isFullWidth, selection: selection)
         }
     }
 
     @ToolbarContentBuilder private var toolbarContent: some ToolbarContent {
+        ToolbarItem(placement: .primaryAction) {
+            Toggle(isOn: Binding(get: { fullWidth.isFullWidth },
+                                 set: { _ in fullWidth.toggle() })) {
+                Image(systemName: "arrow.left.and.right")
+            }
+            .help("Toggle Full Width  (⇧⌘F)")
+        }
         ToolbarItem(placement: .primaryAction) {
             Picker("Mode", selection: $mode) {
                 Image(systemName: "eye").tag(EditorMode.view)

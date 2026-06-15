@@ -70,6 +70,13 @@ window.qmdSetFontScale = function (scale) {
   document.body.style.fontSize = (16 * s) + 'px';
 };
 
+// ---- full-width toggle -----------------------------------------------------
+// When on, content fills the viewport width; when off (default) it stays capped
+// to a readable measure and centered. Kept in sync with the raw editor.
+window.qmdSetFullWidth = function (full) {
+  document.body.classList.toggle('full-width', !!full);
+};
+
 // ---- scroll sync API -------------------------------------------------------
 // 0-based source line of the block at the top of the viewport (interpolated).
 window.qmdGetTopLine = function () {
