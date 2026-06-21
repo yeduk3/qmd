@@ -65,7 +65,10 @@ struct SidebarView: View {
     @ObservedObject var tree: FileTreeModel
     @ObservedObject var sidebar: SidebarController
     @ObservedObject var detailFocus: DetailFocusController
-    @Environment(\.openDocument) private var openDocument
+    /// How to open a chosen file. ContentView wraps the SwiftUI `openDocument` action; the
+    /// folder-browser window (no document scene, so no `openDocument` env) routes through
+    /// NSDocumentController instead. Root-parking around the call stays in this view.
+    let openFile: (URL) -> Void
 
     var body: some View {
         Group {
@@ -74,7 +77,7 @@ struct SidebarView: View {
                     Section {
                         ForEach(FileEntry.children(of: rootURL)) { entry in
                             FileRow(entry: entry, root: rootURL, currentFile: currentFile,
-                                    tree: tree, sidebar: sidebar)
+                                    tree: tree, sidebar: sidebar, openFile: openFile)
                         }
                     } header: {
                         HStack {
@@ -135,7 +138,7 @@ struct SidebarView: View {
         guard let url = FileEntry.makeNewFile(in: dir) else { return }
         tree.reload()
         sidebar.captureScroll(root: rootURL)
-        Task { try? await openDocument(at: url) }
+        openFile(url)
     }
 
     /// Opens / re-focuses for a sidebar row. `focusDetail` distinguishes ⌘↓ and click
@@ -162,7 +165,7 @@ struct SidebarView: View {
         // the same tree, instead of re-rooting at the subfolder / opening a new window.
         if let rootURL { OpenRootRouter.shared.roots[url.standardizedFileURL] = rootURL }
         sidebar.captureScroll(root: rootURL)
-        Task { try? await openDocument(at: url) }
+        openFile(url)
     }
 }
 
@@ -172,11 +175,11 @@ private struct FileRow: View {
     let currentFile: URL?
     @ObservedObject var tree: FileTreeModel
     @ObservedObject var sidebar: SidebarController
+    let openFile: (URL) -> Void
     @ObservedObject private var expansion = SidebarExpansion.shared
 
     @State private var children: [FileEntry] = []
     @FocusState private var renameFocused: Bool
-    @Environment(\.openDocument) private var openDocument
 
     private var isRenaming: Bool { sidebar.renamingURL == entry.url }
 
@@ -195,7 +198,7 @@ private struct FileRow: View {
     var body: some View {
         if entry.isDirectory {
             DisclosureGroup(isExpanded: expandedBinding) {
-                ForEach(children) { FileRow(entry: $0, root: root, currentFile: currentFile, tree: tree, sidebar: sidebar) }
+                ForEach(children) { FileRow(entry: $0, root: root, currentFile: currentFile, tree: tree, sidebar: sidebar, openFile: openFile) }
             } label: {
                 if isRenaming {
                     renameField
@@ -277,7 +280,7 @@ private struct FileRow: View {
         if entry.isDirectory { expansion.expanded.insert(entry.url) }
         if let root { OpenRootRouter.shared.roots[url.standardizedFileURL] = root }
         tree.reload()
-        Task { try? await openDocument(at: url) }
+        openFile(url)
     }
 
 }

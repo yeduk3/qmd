@@ -3,6 +3,10 @@ import AppKit
 
 @main
 struct GlimApp: App {
+    // Routes folder-open events (Finder "Open With" / `open -a Glim <dir>` / drag) to a
+    // sidebar browser; forwards file opens to the normal document pipeline. See FolderBrowser.swift.
+    @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
+
     var body: some Scene {
         DocumentGroup(newDocument: MarkdownDocument()) { config in
             ContentView(document: config.$document, fileURL: config.fileURL)

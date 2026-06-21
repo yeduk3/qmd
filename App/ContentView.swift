@@ -45,7 +45,8 @@ struct ContentView: View {
     var body: some View {
         NavigationSplitView(columnVisibility: $sidebarVis.columnVisibility) {
             SidebarView(rootURL: browsingRoot, currentFile: fileURL,
-                        tree: tree, sidebar: sidebar, detailFocus: detailFocus)
+                        tree: tree, sidebar: sidebar, detailFocus: detailFocus,
+                        openFile: { url in Task { try? await openDocument(at: url) } })
                 .navigationSplitViewColumnWidth(min: 180, ideal: 240, max: 420)
         } detail: {
             detail
