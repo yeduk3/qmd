@@ -92,8 +92,31 @@ struct MarkdownWebView: NSViewRepresentable {
             guard ready else { pending = markdown; return }
             guard markdown != lastRendered else { return }
             lastRendered = markdown
-            webView?.evaluateJavaScript("window.renderMarkdown(\(WebResources.jsLiteral(markdown)));",
+            let toRender = docDirectory.map { embedLocalImages(markdown, in: $0) } ?? markdown
+            webView?.evaluateJavaScript("window.renderMarkdown(\(WebResources.jsLiteral(toRender)));",
                                         completionHandler: nil)
+        }
+
+        // WKWebView sandbox only allows reading from the bundle's web/ dir (allowingReadAccessTo).
+        // Resolve relative image paths to base64 data URIs so local images render.
+        private func embedLocalImages(_ md: String, in dir: URL) -> String {
+            guard let re = try? NSRegularExpression(pattern: #"!\[([^\]]*)\]\(([^)]+)\)"#) else { return md }
+            let ns = md as NSString
+            let matches = re.matches(in: md, range: NSRange(location: 0, length: ns.length))
+            var result = md
+            for m in matches.reversed() {
+                let path = ns.substring(with: m.range(at: 2))
+                guard !path.hasPrefix("http"), !path.hasPrefix("data:"), !path.hasPrefix("file:") else { continue }
+                let fileURL = dir.appendingPathComponent(path)
+                guard let data = try? Data(contentsOf: fileURL) else { continue }
+                let ext = fileURL.pathExtension.lowercased()
+                let mime = ["jpeg": "image/jpeg", "jpg": "image/jpeg", "gif": "image/gif",
+                            "svg": "image/svg+xml", "webp": "image/webp"][ext] ?? "image/png"
+                let alt = ns.substring(with: m.range(at: 1))
+                let replacement = "![\(alt)](data:\(mime);base64,\(data.base64EncodedString()))"
+                result.replaceSubrange(Range(m.range(at: 0), in: result)!, with: replacement)
+            }
+            return result
         }
 
         /// Push the current zoom into the page (no-op until ready, and de-duped so a
